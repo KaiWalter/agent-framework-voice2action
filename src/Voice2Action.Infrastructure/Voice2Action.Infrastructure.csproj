@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Voice2Action.Application/Voice2Action.Application.csproj" />
+    <ProjectReference Include="../Voice2Action.Domain/Voice2Action.Domain.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
+    <PackageReference Include="Azure.Identity" Version="1.16.0" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="1.0.0-preview.251002.1" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.9.1-preview.1.25474.6" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,86 @@
+###############################
+# .NET / C# Solution Git Ignore
+# Refs: FR003 (config hygiene for Azure OpenAI secrets)
+###############################
+
+# Build output
+bin/
+obj/
+
+# Visual Studio / VS Code / IDE metadata
+.vs/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Rider / IntelliJ
+.idea/
+*.sln.iml
+
+# User-specific / temp
+*.user
+*.suo
+*.userprefs
+*.tmp
+*.bak
+*.swp
+*.orig
+
+# Logs
+*.log
+logs/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+*.nuspec
+*.nuspec.tmp
+
+# Coverage & test artifacts
+coverage/
+TestResults/
+*.coverage
+*.coveragexml
+*.opencover.xml
+
+# BenchmarkDotNet
+BenchmarkDotNet.Artifacts/
+
+# Generated files
+*.g.cs
+*.generated.cs
+
+# Resharper
+_ReSharper*/
+*.DotSettings.user
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Azure / local secrets (do NOT commit real secrets)
+# Keep base appsettings.json tracked (contains placeholders) per FR003.
+appsettings.Development.json
+appsettings.Local.json
+appsettings.*.local.json
+secrets.json
+
+# Tooling caches
+.sonarqube/
+.scannerwork/
+
+# Python helper scripts cache (if any)
+__pycache__/
+*.pyc
+
+# Lock / pid files
+*.pid
+
+# Temp scratch
+scratch/
+*.scratch
+
+###############################
