@@ -1,76 +1,92 @@
+using System.ComponentModel;
+using Azure;
 using Azure.AI.OpenAI;
-using Azure.Core; // Core abstractions
-using Azure; // AzureKeyCredential
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Voice2Action.Application;
-using Voice2Action.Domain;
-using Voice2Action.Infrastructure.AI;
-using Voice2Action.Infrastructure.Messaging;
+using Microsoft.Extensions.DependencyInjection;
+using OpenAI;
 
-var builder = Host.CreateApplicationBuilder(args);
-
-var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-              ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
-var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
-             ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
-
-builder.Services.AddSingleton<IChatClient>(_ =>
-    new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey))
-        .GetChatClient(deployment)
-        .AsIChatClient());
-
-// Two distinct agents: one for spam detection, one for drafting.
-// Register named instances using factory pattern.
-
-builder.Services.AddSingleton<AIAgent>(sp =>
+public static class Program
 {
-    var client = sp.GetRequiredService<IChatClient>();
-    return new ChatClientAgent(client,
-        new ChatClientAgentOptions("You are a spam detection assistant that identifies spam emails.")
+    private static readonly string Endpoint =
+        Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
+        ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
+    private static readonly string DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4.1-mini";
+    private static readonly string ApiKey =
+        Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
+        ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
+
+    private const string AgentName = "Voice2Action";
+    private const string AgentInstructions =
+        @"Based on a voice recording you determine the user's intent and take action.
+        When user explicitly states a task and due date, you set a reminder.
+        When no explicit intent can be determined, you draft an email with the transcribed text.
+        ";
+
+    private static readonly Lazy<IHost> HostContainer = new(() =>
+    {
+        var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
+        builder.Services.AddSingleton(sp => new AzureOpenAIClient(new Uri(Endpoint), new AzureKeyCredential(ApiKey)));
+        builder.Services.AddSingleton<Voice2Action.Domain.ITranscriptionService>(sp =>
         {
-            ChatOptions = new() { ResponseFormat = ChatResponseFormat.ForJsonSchema<DetectionResult>() }
+            var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper";
+            return new Voice2Action.Infrastructure.AI.OpenAIAudioTranscriptionService(
+                sp.GetRequiredService<AzureOpenAIClient>(), audioDeployment);
         });
-});
+        return builder.Build();
+    });
 
-builder.Services.AddSingleton<AIAgent>(sp =>
-{
-    var client = sp.GetRequiredService<IChatClient>();
-    return new ChatClientAgent(client,
-        new ChatClientAgentOptions("You are an email assistant that helps users draft responses professionally.")
-        {
-            ChatOptions = new() { ResponseFormat = ChatResponseFormat.ForJsonSchema<EmailResponse>() }
-        });
-});
+    [Description("Transcribe the given audio file (mp3/wav/m4a) using Azure OpenAI Whisper and return raw text.")]
+    public static string TranscribeVoiceRecording([Description("Path to recording file.")] string recording)
+    {
+        if (string.IsNullOrWhiteSpace(recording)) throw new ArgumentException("Recording path empty", nameof(recording));
+        if (!File.Exists(recording)) throw new FileNotFoundException("Audio file not found", recording);
+        var transcription = HostContainer.Value.Services.GetRequiredService<Voice2Action.Domain.ITranscriptionService>();
+        return transcription.TranscribeAsync(recording, CancellationToken.None).GetAwaiter().GetResult();
+    }
 
-// Register services mapping: by convention first agent resolves to spam detection, second to draft.
-// For clarity in real app you'd use named options or wrapper types. Here keep it simple.
+    [Description("Set a reminder for the given task at the specified date and time.")]
+    public static string SetReminder(
+        [Description("Task to be reminded of.")] string task,
+        [Description("Due date and time for the reminder.")] DateTime dueDate
+    ) => $"Reminder set for task '{task}' at {dueDate}.";
 
-builder.Services.AddSingleton<ISpamDetectionService>(sp =>
-{
-    // Resolve first registered AIAgent
-    var agents = sp.GetServices<AIAgent>().ToList();
-    return new OpenAIAgentSpamDetectionService(agents[0]);
-});
+    [Description("Send an email with the given subject and body to the user.")]
+    public static string SendEmail(
+        [Description("Email subject.")] string subject,
+        [Description("Email body.")] string body
+    ) => $"Email sent with subject '{subject}' and body '{body}'";
 
-builder.Services.AddSingleton<IEmailDraftService>(sp =>
-{
-    var agents = sp.GetServices<AIAgent>().ToList();
-    return new OpenAIAgentEmailDraftService(agents[1]);
-});
+    public static async Task Main()
+    {
+        var chatClient = new AzureOpenAIClient(new Uri(Endpoint), new AzureKeyCredential(ApiKey)).GetChatClient(DeploymentName);
+        AIAgent agent = chatClient.CreateAIAgent(
+            AgentInstructions,
+            AgentName,
+            tools:
+            [
+                AIFunctionFactory.Create(new Func<string, string>(TranscribeVoiceRecording)),
+                AIFunctionFactory.Create(new Func<string, DateTime, string>(SetReminder)),
+                AIFunctionFactory.Create(new Func<string, string, string>(SendEmail)),
+            ]
+        );
 
-builder.Services.AddSingleton<IEmailSender, ConsoleEmailSender>();
-builder.Services.AddSingleton<ISpamDispositionService, ConsoleSpamDispositionService>();
-
-builder.Services.AddTransient<ProcessIncomingEmail>();
-
-var host = builder.Build();
-
-var processor = host.Services.GetRequiredService<ProcessIncomingEmail>();
-var sampleEmail = "This is NOT a joke! You are one of only 5 lucky winners selected from millions.";
-await processor.HandleAsync(sampleEmail);
-
-Console.WriteLine("Processing complete.");
+        AgentThread thread = agent.GetNewThread();
+        var result = await agent.RunAsync(
+            "process voice recording in file ./audio-samples/sample-recording-1-task-with-due-date-and-reminder.mp3",
+            thread
+        );
+        Console.WriteLine(result);
+        result = await agent.RunAsync(
+            "process voice recording in file ./audio-samples/sample-recording-2-random-thoughts.mp3",
+            thread
+        );
+        Console.WriteLine(result);
+        result = await agent.RunAsync(
+            "process voice recording in file ./audio-samples/sample-recording-3-send-email.mp3",
+            thread
+        );
+        Console.WriteLine(result);
+    }
+}

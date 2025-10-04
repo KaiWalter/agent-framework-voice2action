@@ -2,7 +2,7 @@
 
 This repository explores personal productivity flows using the [Microsoft Agent Framework](https://aka.ms/AgentFramework), implementing voice-to-action workflows that automatically process voice recordings and execute appropriate actions.
 
-Basic flow as implemented here - see [my post](https://dev.to/kaiwalter/dipping-into-dapr-agentic-workflows-fbi) for more background:
+Original flow as implemented here - see [my post](https://dev.to/kaiwalter/dipping-into-dapr-agentic-workflows-fbi) for more background:
 
 1. polling on OneDrive, downloading and transcribing the voice recording runs in a deterministic workflow
 2. transcript is then handed to LLM-orchestrated agents which have instructions to figure out what to do with the transcription

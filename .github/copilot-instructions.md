@@ -27,66 +27,73 @@ Environment variables required at runtime:
 export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
 export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o"  # or another deployment
 ```
-Build & run the console sample:
+## AI Agent Working Guide (Voice2Action)
+Focused instructions so an AI agent can be productive immediately.
+
+### 1. Architecture (Clean-ish layering)
+- `Voice2Action.Domain`: Interfaces + DTOs only (`ISpamDetectionService`, `IEmailDraftService`, `DetectionResult`, `EmailResponse`). No external SDK types.
+- `Voice2Action.Application`: Orchestrator (`ProcessIncomingEmail`) consumes domain ports only.
+- `Voice2Action.Infrastructure`: Implements ports (AI: `OpenAIAgentSpamDetectionService`, `OpenAIAgentEmailDraftService`; Messaging: `ConsoleEmailSender`, `ConsoleSpamDispositionService`).
+- `Voice2Action.Console`: Composition root (DI + environment config + sample run).
+Goal: Swap providers or delivery channels without touching Domain/Application.
+
+### 2. Build & Run
+Always enter dev shell (provides .NET 9):
+```
+nix develop
+```
+Env vars (API key only – CLI auth removed):
+```
+export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
+export AZURE_OPENAI_API_KEY="<key>"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # or your deployment
+```
+Run sample:
 ```
 dotnet run --project src/Voice2Action.Console/Voice2Action.Console.csproj
 ```
-If build errors complain about net9 support, you are NOT inside the nix dev shell.
 
-## 3. Key Patterns
-- Dependency Inversion: Application depends only on interfaces in Domain. Infrastructure provides concrete Azure/OpenAI-powered implementations.
-- Agent Usage: Agents created in `Program.cs` using `AzureOpenAIClient(...).GetChatClient(deployment).AsIChatClient()` and wrapped by `ChatClientAgent`. Two distinct agents registered (spam detection + drafting) then selected by ordering when injected.
-- JSON Structured Outputs: `ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>` ensures LLM returns JSON matching `DetectionResult` or `EmailResponse`. Services deserialize `response.Text` via `JsonSerializer.Deserialize<T>()` and throw if null.
-- Simple Console Adapters: Output is side-effected through `Console.WriteLine` in messaging classes—replace these to integrate real channels.
+### 3. Agent / LLM Usage Pattern
+- `Program.cs` builds a single `IChatClient` via `new AzureOpenAIClient(uri, new AzureKeyCredential(apiKey)).GetChatClient(deployment).AsIChatClient()`.
+- Two `ChatClientAgent` instances registered (ordering currently used to distinguish spam vs drafting).
+- Services call `_agent.RunAsync(message, thread: null, options: null, cancellationToken)` using the preview signature `RunAsync(string, AgentThread?, AgentRunOptions?, CancellationToken)`.
+- Structured output: each agent sets `ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>`; adapter deserializes `response.Text` and throws if null (fail fast).
 
-Reference samples for current Agent Framework call signatures:
-If you need to double‑check evolving preview APIs (e.g., `AIAgent.RunAsync` parameters, workflow edges, switch/case semantics), consult the official Microsoft Agent Framework getting started samples. Treat them as the authoritative source if this repo's usage ever drifts or compilation errors suggest signature changes:
-	- Conditional Edge (basic): https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/GettingStarted/Workflows/ConditionalEdges/01_EdgeCondition/Program.cs
-	- Switch / Case routing: https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/GettingStarted/Workflows/ConditionalEdges/02_SwitchCase/Program.cs
-	- Multi-selection edges: https://github.com/microsoft/agent-framework/blob/main/dotnet/samples/GettingStarted/Workflows/ConditionalEdges/03_MultiSelection/Program.cs
-	- Core OpenAI agent implementation (latest method signatures such as `RunAsync` overloads): https://github.com/microsoft/agent-framework/blob/main/dotnet/src/Microsoft.Agents.AI.OpenAI/OpenAIChatClientAgent.cs
+### 4. Extending Functionality
+Add new external capability:
+1. Define port interface in Domain.
+2. Consume it in Application (no Azure/OpenAI refs).
+3. Implement in Infrastructure (use Azure/OpenAI or other provider).
+4. Register in Console DI.
+Add another LLM tool: create new `ChatClientAgent` with focused system prompt + JSON schema DTO; register before consumers (or refactor to named registrations to avoid fragile indexing).
 
-When preview package updates introduce breaking signature changes (e.g., replacing a simple `RunAsync(string, CancellationToken)` with an overload taking `AgentThread?` and `AgentRunOptions?`), prefer adapting to the new form shown in those samples instead of guessing property names.
+### 5. Conventions & Style
+- DTOs: simple mutable props, explicit `[JsonPropertyName]` for stable schema.
+- Concrete classes marked `sealed`.
+- No Azure/OpenAI types leak beyond Infrastructure.
+- Maintain fail-fast behavior (throw on invalid JSON) unless adding explicit retry logic.
 
-## 4. Adding New Capabilities (Follow These Conventions)
-When adding a new external interaction:
-1. Define a new interface in `Voice2Action.Domain` (port).
-2. Use it inside an Application-layer use case (or extend existing one) without referencing Azure/OpenAI specifics.
-3. Implement in Infrastructure (keep Azure/OpenAI SDK usage here only).
-4. Wire it in `Program.cs` (Console) or future host.
+### 6. Common Pitfalls
+- Skipping `nix develop` → NETSDK1045 (wrong SDK version).
+- Missing any of the three env vars → startup exception.
+- Relying on agent registration order; adding more agents requires refactor (recommend keyed/named registration).
+- Preview API drift: `RunAsync` overloads can change—verify against upstream samples.
 
-When adding another LLM-backed agent tool:
-- Create a new `ChatClientAgent` with a focused system prompt and `ChatResponseFormat.ForJsonSchema<YourDto>`.
-- Add matching DTO with explicit `JsonPropertyName` attributes if field names should be snake_case.
-- Register via DI before services that depend on it.
+### 7. Reference Sources (authoritative for signatures)
+- Basic conditional workflow: 01 EdgeCondition sample
+- Switch/case routing: 02 SwitchCase sample
+- Multi-selection edges: 03 MultiSelection sample
+- Core OpenAI agent implementation (current method signatures): `OpenAIChatClientAgent.cs`
+Links already embedded in earlier revisions; keep them when updating.
 
-## 5. Safety & Error Handling Expectations
-- Services currently throw on invalid JSON. Keep that pattern (fail fast) unless adding structured retry logic.
-- Validate string inputs (`string.IsNullOrWhiteSpace`) before invoking AI calls (see `ProcessIncomingEmail`).
+### 8. Key Files
+- `ProcessIncomingEmail.cs`: Orchestration.
+- `AI/*.cs`: LLM adapters.
+- `Messaging/ConsoleEmailSender.cs`: Output & spam handling.
+- `Program.cs`: DI & agent configuration.
+- `flake.nix`: Ensures .NET 9 toolchain inside dev shell.
 
-## 6. Testing Guidance (Not Yet Implemented)
-- For unit tests, replace concrete services with in-memory fakes implementing the domain interfaces.
-- Avoid referencing `Azure.AI.OpenAI` in test projects—mock at the `ISpamDetectionService` / `IEmailDraftService` boundary.
+### 9. Testing (not yet present)
+- Use in-memory fakes for domain interfaces; do not reference Azure SDK in tests.
 
-## 7. Common Pitfalls
-- Forgetting `nix develop` -> net9 target build failure (NETSDK1045).
-- Registering agents: Order matters in current simplistic approach (`GetServices<AIAgent>().ToList()[index]`). If you add more agents, refactor to named registrations to avoid brittle indexing.
-- Missing env vars -> startup `InvalidOperationException` in `Program.cs`.
-
-## 8. Suggested Improvements (Optional Backlog Indicators)
-Documented but not yet implemented—do not assume they exist:
-- Resilience (Polly), streaming token support, alternate delivery channels, unit tests.
-
-## 9. File Landmarks
-- `src/Voice2Action.Application/ProcessIncomingEmail.cs`: Orchestration logic.
-- `src/Voice2Action.Infrastructure/AI/*.cs`: LLM-backed service adapters.
-- `src/Voice2Action.Infrastructure/Messaging/ConsoleEmailSender.cs`: Outbound side-effect adapters.
-- `src/Voice2Action.Console/Program.cs`: DI setup & example execution.
-- `flake.nix`: Dev environment ensuring correct .NET SDK.
-
-## 10. Style & Conventions
-- Keep DTOs simple, mutable (auto-properties) with explicit `JsonPropertyName` for cross-language/LLM clarity.
-- Prefer `sealed` for concrete service classes.
-- Keep Application layer free of Azure/OpenAI types—only domain interfaces & models.
-
-Use this document to align edits with the layering goals and to avoid leaking infrastructure concerns into core logic. Keep changes minimal, additive, and aligned with existing patterns.
+Focus future edits on keeping layering intact, avoiding SDK leakage outside Infrastructure, and updating RunAsync usage only after checking upstream samples.
