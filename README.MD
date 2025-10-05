@@ -13,11 +13,11 @@ Original flow as implemented here - see [my post](https://dev.to/kaiwalter/dippi
 The solution has been refactored into a layered Clean Architecture structure:
 
 ```
-src/
-	Voice2Action.Domain/            # Core models and port interfaces (no external deps)
-	Voice2Action.Application/       # Use cases / orchestration (depends on Domain only)
-	Voice2Action.Infrastructure/    # AI + messaging adapters (depends on Application + Domain)
-	Voice2Action.Console/           # Composition root / entry point
+	src/
+		Voice2Action.Domain/            # Core models and port interfaces (no external deps)
+		Voice2Action.Application/       # Use cases / orchestration (depends on Domain only)
+		Voice2Action.Infrastructure/    # AI + messaging adapters (depends on Application + Domain)
+		Voice2Action.Console/            # Composition root / multi-agent entry point
 ```
 
 Key abstractions:

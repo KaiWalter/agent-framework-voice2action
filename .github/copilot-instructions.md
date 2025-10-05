@@ -9,7 +9,7 @@ Architecture follows a Clean-ish layering:
 - `Voice2Action.Domain`: Pure domain contracts + simple DTO models (no external deps). Only place defining interfaces like `ISpamDetectionService`, `IEmailDraftService`, etc.
 - `Voice2Action.Application`: Orchestrates a use case (`ProcessIncomingEmail`). Depends only on Domain abstractions. No Azure/OpenAI specifics here.
 - `Voice2Action.Infrastructure`: Implements domain ports using Azure OpenAI Agents (`OpenAIAgentSpamDetectionService`, `OpenAIAgentEmailDraftService`) and simple messaging adapters (`ConsoleEmailSender`, `ConsoleSpamDispositionService`).
-- `Voice2Action.Console`: Composition root (dependency injection + runtime wiring) and a minimal demo invocation.
+- `Voice2Action.Console`: Composition root (dependency injection + multi‑agent demo invocation).
 
 Goal: Swap AI/provider logic or add delivery channels without touching Domain/Application code.
 
@@ -38,7 +38,7 @@ Focused instructions so an AI agent can be productive immediately.
 - `Voice2Action.Domain`: Interfaces + DTOs only (`ISpamDetectionService`, `IEmailDraftService`, `DetectionResult`, `EmailResponse`). No external SDK types.
 - `Voice2Action.Application`: Orchestrator (`ProcessIncomingEmail`) consumes domain ports only.
 - `Voice2Action.Infrastructure`: Implements ports (AI: `OpenAIAgentSpamDetectionService`, `OpenAIAgentEmailDraftService`; Messaging: `ConsoleEmailSender`, `ConsoleSpamDispositionService`).
-- `Voice2Action.Console`: Composition root (DI + environment config + sample run).
+- `Voice2Action.Console`: Composition root (DI + environment config + sample multi‑agent run).
 Goal: Swap providers or delivery channels without touching Domain/Application.
 
 ### 2. Build & Run
