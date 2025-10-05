@@ -1,25 +1,5 @@
 namespace Voice2Action.Domain;
 
-public interface ISpamDetectionService
-{
-    Task<DetectionResult> DetectAsync(string emailContent, CancellationToken ct = default);
-}
-
-public interface IEmailDraftService
-{
-    Task<EmailResponse> DraftReplyAsync(string emailContent, CancellationToken ct = default);
-}
-
-public interface IEmailSender
-{
-    Task SendAsync(EmailResponse response, CancellationToken ct = default);
-}
-
-public interface ISpamDispositionService
-{
-    Task HandleSpamAsync(DetectionResult detection, CancellationToken ct = default);
-}
-
 public interface ITranscriptionService
 {
     /// <summary>
@@ -27,4 +7,28 @@ public interface ITranscriptionService
     /// </summary>
     /// <param name="filePath">Path to local audio file.</param>
     Task<string> TranscribeAsync(string filePath, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Provides current date/time information (both local and UTC) for normalization tasks.
+/// </summary>
+public interface IDateTimeService
+{
+    string GetCurrentDateTime();
+}
+
+/// <summary>
+/// Schedules or records reminders. (Current implementation is a placeholder returning a formatted string.)
+/// </summary>
+public interface IReminderService
+{
+    string SetReminder(string task, DateTime dueDate, DateTime? reminderDate);
+}
+
+/// <summary>
+/// Sends emails (placeholder returning a formatted string in the sample).
+/// </summary>
+public interface IEmailService
+{
+    string SendEmail(string subject, string body);
 }

@@ -3,50 +3,49 @@
 Concise, project-specific guidance for AI coding agents working in this repository.
 
 ## 1. Big Picture
-This repo experiments with agentic voice-to-action productivity flows using Microsoft Agent Framework + Azure OpenAI. Current implemented slice focuses on classifying inbound email-like text as spam vs not-spam and (if valid) drafting a professional reply.
+This repo implements a multi‑agent voice‑to‑action workflow with Microsoft Agent Framework (preview) + Azure OpenAI. A planner (coordinator) and several worker agents transform an audio recording into concrete actions (transcription, reminder creation, email drafting/sending placeholder) and a final summary.
 
-Architecture follows a Clean-ish layering:
-- `Voice2Action.Domain`: Pure domain contracts + simple DTO models (no external deps). Only place defining interfaces like `ISpamDetectionService`, `IEmailDraftService`, etc.
-- `Voice2Action.Application`: Orchestrates a use case (`ProcessIncomingEmail`). Depends only on Domain abstractions. No Azure/OpenAI specifics here.
-- `Voice2Action.Infrastructure`: Implements domain ports using Azure OpenAI Agents (`OpenAIAgentSpamDetectionService`, `OpenAIAgentEmailDraftService`) and simple messaging adapters (`ConsoleEmailSender`, `ConsoleSpamDispositionService`).
-- `Voice2Action.Console`: Composition root (dependency injection + multi‑agent demo invocation).
+Clean layering:
+- `Voice2Action.Domain`: Pure contracts (`ITranscriptionService`, `IDateTimeService`, `IReminderService`, `IEmailService`, `ITextAgent`, `IVoiceCommandOrchestrator`) + DTOs (`AgentActionRecord`, `OrchestrationResult`). No Azure/OpenAI types.
+- `Voice2Action.Application`: Orchestration abstractions (e.g. `IAgentSetProvider`) and coordination logic (planner loop lives in Infrastructure currently but only uses domain contracts).
+- `Voice2Action.Infrastructure`: Implementations of domain ports (Azure OpenAI transcription, simple date/time, reminder, email services) + agent assembly (`DefaultAgentSetProvider`) + orchestrator implementation.
+- `Voice2Action.Console`: Composition root / CLI entry (wires env vars, builds agent set, runs orchestrator).
 
-Goal: Swap AI/provider logic or add delivery channels without touching Domain/Application code.
+Goal: Add/replace tools by introducing domain interfaces + implementations without modifying orchestration core logic.
 
 ## 2. Development Environment & Build
 ALWAYS enter an appropriate Nix dev shell before any `dotnet build` or `dotnet run` so the .NET 9 SDK is available. If you skip this you'll hit NETSDK1045 errors.
 
 Dev shells:
 ```
-# Interactive (loads secrets via 1Password CLI shellHook)
+# Interactive (secrets, manual runs)
 nix develop
 
-# Minimal build shell (no secrets) – use for CI or pure compilation
+# Pure build/test (CI safe, no secrets)
 nix develop .#build -c dotnet build
+nix develop .#build -c dotnet test
 ```
-Quick verification: `dotnet --version` should start with `9.`. If it shows `8.` you are not in the shell.
+Always use one of these; otherwise you’ll hit NETSDK1045 (.NET 9 target with .NET 8 SDK).
 
-Environment variables required at runtime:
+Environment variables:
 ```
 export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
-export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o"  # or another deployment
+export AZURE_OPENAI_API_KEY="<key>"
+export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o"
+export AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME="whisper"
 ```
 ## AI Agent Working Guide (Voice2Action)
 Focused instructions so an AI agent can be productive immediately.
 
-### 1. Architecture (Clean-ish layering)
-- `Voice2Action.Domain`: Interfaces + DTOs only (`ISpamDetectionService`, `IEmailDraftService`, `DetectionResult`, `EmailResponse`). No external SDK types.
-- `Voice2Action.Application`: Orchestrator (`ProcessIncomingEmail`) consumes domain ports only.
-- `Voice2Action.Infrastructure`: Implements ports (AI: `OpenAIAgentSpamDetectionService`, `OpenAIAgentEmailDraftService`; Messaging: `ConsoleEmailSender`, `ConsoleSpamDispositionService`).
-- `Voice2Action.Console`: Composition root (DI + environment config + sample multi‑agent run).
-Goal: Swap providers or delivery channels without touching Domain/Application.
+### 1. Architecture Snapshot
+- Domain: service interfaces (transcription, datetime, reminder, email), agent/orchestration contracts.
+- Infrastructure: service implementations + planner/worker LLM agent wiring (`DefaultAgentSetProvider`).
+- Console: thin entrypoint.
+No legacy spam/email code remains.
 
 ### 2. Build & Run
-Choose a dev shell (interactive vs build) to ensure .NET 9 is available:
+Use dev shell to build with .NET 9:
 ```
-# interactive dev (with secrets)
-nix develop
-# or pure build (no secrets fetched)
 nix develop .#build -c dotnet build
 ```
 Env vars (API key only – CLI auth removed):
@@ -57,38 +56,35 @@ export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # or your deployment
 ```
 Run sample (needs secrets → use interactive shell):
 ```
-dotnet run --project src/Voice2Action.Console/Voice2Action.Console.csproj
-```
-Pure build (no run, no secrets required):
-```
-nix develop .#build -c dotnet build
+nix develop -c dotnet run --project src/Voice2Action.Console/Voice2Action.Console.csproj
 ```
 
 ### 3. Agent / LLM Usage Pattern
-- `Program.cs` builds a single `IChatClient` via `new AzureOpenAIClient(uri, new AzureKeyCredential(apiKey)).GetChatClient(deployment).AsIChatClient()`.
-- Two `ChatClientAgent` instances registered (ordering currently used to distinguish spam vs drafting).
-- Services call `_agent.RunAsync(message, thread: null, options: null, cancellationToken)` using the preview signature `RunAsync(string, AgentThread?, AgentRunOptions?, CancellationToken)`.
-- Structured output: each agent sets `ChatOptions.ResponseFormat = ChatResponseFormat.ForJsonSchema<T>`; adapter deserializes `response.Text` and throws if null (fail fast).
+- Each worker agent: `ChatClientAgent` with `ChatOptions.Tools` populated via `AIFunctionFactory.Create` wrapping domain service methods.
+- Coordinator agent: prompt injects a catalog of worker names + capabilities; returns minified JSON (`{"Action":"DELEGATE|DONE","Agent":"...","Task":"...","Summary":"..."}`).
+- Orchestrator loop (Infrastructure) parses planner JSON and invokes the selected worker.
+- Tool calls execute synchronously against domain services (fail-fast exceptions bubble unless caught by model behavior).
 
 ### 4. Extending Functionality
-Add new external capability:
-1. Define port interface in Domain.
-2. Consume it in Application (no Azure/OpenAI refs).
-3. Implement in Infrastructure (use Azure/OpenAI or other provider).
-4. Register in Console DI.
-Add another LLM tool: create new `ChatClientAgent` with focused system prompt + JSON schema DTO; register before consumers (or refactor to named registrations to avoid fragile indexing).
+Add a new tool capability:
+1. Add interface to Domain (e.g. `ICalendarService`).
+2. Implement it in Infrastructure.
+3. Inject into `DefaultAgentSetProvider` and expose with `ChatOptions.Tools` on an existing or new worker agent.
+4. Update prompts (worker + coordinator template) to include the new capability.
+5. (Optional) Add integration / unit tests with a fake implementation.
 
 ### 5. Conventions & Style
-- DTOs: simple mutable props, explicit `[JsonPropertyName]` for stable schema.
-- Concrete classes marked `sealed`.
-- No Azure/OpenAI types leak beyond Infrastructure.
-- Maintain fail-fast behavior (throw on invalid JSON) unless adding explicit retry logic.
+- Domain DTOs/classes `sealed`, mutable auto props.
+- Keep prompts in `Prompts/` folder (Console project) – provider loads by file name.
+- No Azure/OpenAI types outside Infrastructure.
+- Prefer small focused worker prompts; coordinator prompt template token-replaced with agent catalog.
+- Fail-fast: if planner returns invalid JSON, orchestrator should surface error (future: structured retry/backoff).
 
 ### 6. Common Pitfalls
-- Skipping `nix develop` → NETSDK1045 (wrong SDK version).
-- Missing any of the three env vars → startup exception.
-- Relying on agent registration order; adding more agents requires refactor (recommend keyed/named registration).
-- Preview API drift: `RunAsync` overloads can change—verify against upstream samples.
+- Forgetting Nix dev shell → NETSDK1045.
+- Not providing both chat and audio deployment env vars.
+- Planner prompt drift (JSON not minified / extra commentary) – reinforce in template.
+- Tool signature mismatches after interface changes (update `AIFunctionFactory.Create` signatures accordingly).
 
 ### 7. Reference Sources (authoritative for signatures)
 - Basic conditional workflow: 01 EdgeCondition sample
@@ -98,13 +94,26 @@ Add another LLM tool: create new `ChatClientAgent` with focused system prompt + 
 Links already embedded in earlier revisions; keep them when updating.
 
 ### 8. Key Files
-- `ProcessIncomingEmail.cs`: Orchestration.
-- `AI/*.cs`: LLM adapters.
-- `Messaging/ConsoleEmailSender.cs`: Output & spam handling.
-- `Program.cs`: DI & agent configuration.
-- `flake.nix`: Ensures .NET 9 toolchain inside dev shell.
+- `Domain/Ports.cs`: Service + agent orchestration interfaces.
+- `Domain/OrchestrationModels.cs`: Action & result models, `ITextAgent`, `AgentSet`.
+- `Infrastructure/AI/DefaultAgentSetProvider.cs`: Builds coordinator + workers.
+- `Infrastructure/AI/OpenAIAudioTranscriptionService.cs`: Whisper transcription.
+- `Infrastructure/AI/DateTimeService|ReminderService|EmailService.cs`: Tool service implementations.
+- `Infrastructure/AI/VoiceCommandOrchestrator*.cs` (if present): Planner execution loop.
+- `Console/Program.cs`: Composition root.
+- `flake.nix`: Nix dev shell definition.
+- `tests/Voice2Action.IntegrationTests/*`: Transcription integration test.
 
-### 9. Testing (not yet present)
-- Use in-memory fakes for domain interfaces; do not reference Azure SDK in tests.
+### 9. Testing
+- Integration test uses fake transcription when real creds absent.
+- Add future tests: planner loop with fake agents; tool services simple string assertions.
+
+### 10. Build & Test Enforcement
+Always run builds & tests via Nix:
+```
+nix develop .#build -c dotnet build
+nix develop .#build -c dotnet test
+```
+Direct `dotnet build` outside shell is considered invalid and should be corrected.
 
 Focus future edits on keeping layering intact, avoiding SDK leakage outside Infrastructure, and updating RunAsync usage only after checking upstream samples.
