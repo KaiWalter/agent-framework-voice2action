@@ -1,134 +1,103 @@
-using System.ComponentModel;
-using System.IO;
-using Azure;
-using Azure.AI.OpenAI;
-using Microsoft.Agents.AI;
-using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using OpenAI;
-using System.Linq;
+using Microsoft.Extensions.Configuration;
+using Azure; // AzureKeyCredential
+using Azure.AI.OpenAI;
+using Voice2Action.Infrastructure.AI;
+using Voice2Action.Domain;
+using Voice2Action.Application;
 
-public static class Program
+// Console host & bootstrap. All tool implementations now live in Infrastructure agent factories.
+// This Program only wires dependencies and runs the orchestrator.
+
+const string DeploymentName = "gpt-4o"; // fallback if env var not set
+
+static IHost BuildHost()
 {
-    private static readonly string Endpoint =
-        Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")
-        ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT is not set.");
-    private static readonly string DeploymentName =
-        Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4o";
-
-    private static readonly string ApiKey =
-        Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")
-        ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
-
-    private const string coordinatingAgentName = "Planner"; // used by provider
-
-    private static readonly Lazy<IHost> HostContainer = new(() =>
+    var builder = Host.CreateDefaultBuilder();
+    builder.ConfigureAppConfiguration(cfg =>
     {
-        var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton(sp => new AzureOpenAIClient(
-            new Uri(Endpoint),
-            new AzureKeyCredential(ApiKey)
-        ));
-        builder.Services.AddSingleton<Voice2Action.Domain.ITranscriptionService>(sp =>
-        {
-            var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper";
-            return new Voice2Action.Infrastructure.AI.OpenAIAudioTranscriptionService(
-                sp.GetRequiredService<AzureOpenAIClient>(), audioDeployment);
-        });
-        builder.Services.AddSingleton<Voice2Action.Domain.IDateTimeService, Voice2Action.Infrastructure.AI.DateTimeService>();
-        builder.Services.AddSingleton<Voice2Action.Domain.IReminderService, Voice2Action.Infrastructure.AI.ReminderService>();
-        builder.Services.AddSingleton<Voice2Action.Domain.IEmailService, Voice2Action.Infrastructure.AI.EmailService>();
-        return builder.Build();
+        cfg.AddEnvironmentVariables();
     });
-
-    [Description(
-        "Transcribe the given audio file (mp3/wav/m4a) using Azure OpenAI Whisper and return raw text."
-    )]
-    public static string TranscribeVoiceRecording(
-        [Description("Path to recording file.")] string recording
-    )
+    builder.ConfigureServices((ctx, services) =>
     {
-        if (string.IsNullOrWhiteSpace(recording))
-            throw new ArgumentException("Recording path empty", nameof(recording));
-        if (!File.Exists(recording))
-            throw new FileNotFoundException("Audio file not found", recording);
-        var transcription =
-            HostContainer.Value.Services.GetRequiredService<Voice2Action.Domain.ITranscriptionService>();
-        return transcription
-            .TranscribeAsync(recording, CancellationToken.None)
-            .GetAwaiter()
-            .GetResult();
-    }
-
-    [Description("Return the current date/time to support normalization of relative or partial dates. Format: LOCAL=yyyy-MM-ddTHH:mm:ssK;UTC=yyyy-MM-ddTHH:mm:ssZ")] 
-    public static string GetCurrentDateTime()
-    {
-        var nowLocal = DateTime.Now; // local machine time
-        var nowUtc = DateTime.UtcNow;
-        return $"LOCAL={nowLocal:yyyy-MM-ddTHH:mm:ssK};UTC={nowUtc:yyyy-MM-ddTHH:mm:ssZ}";
-    }
-
-    [Description("Set a reminder for the given task at the specified date and optional earlier reminder time.")]
-    public static string SetReminder(
-        [Description("Task to be reminded of.")] string task,
-        [Description("Due date for the task.")] DateTime dueDate,
-        [Description("Optional reminder date/time (before due date)." )] DateTime? reminderDate
-    )
-    {
-        var baseMsg = $"Reminder set for task '{task}' due at {dueDate}.";
-        return reminderDate.HasValue
-            ? baseMsg + $" Reminder will trigger at {reminderDate.Value}."
-            : baseMsg;
-    }
-
-    [Description("Send an email with the given subject and body to the user.")]
-    public static string SendEmail(
-        [Description("Email subject.")] string subject,
-        [Description("Email body.")] string body
-    ) => $"Email sent with subject '{subject}' and body '{body}'";
-
-    public static async Task Main(string[] args)
-    {
-        // Build agent set via provider (shared logic for other frontends)
-        var promptFolder = Path.Combine(AppContext.BaseDirectory, "Prompts");
-        var azureClient = new AzureOpenAIClient(new Uri(Endpoint), new AzureKeyCredential(ApiKey));
-        var spRoot = HostContainer.Value.Services;
-        var provider = new Voice2Action.Infrastructure.AI.DefaultAgentSetProvider(
-            azureClient,
-            spRoot.GetRequiredService<Voice2Action.Domain.ITranscriptionService>(),
-            spRoot.GetRequiredService<Voice2Action.Domain.IDateTimeService>(),
-            spRoot.GetRequiredService<Voice2Action.Domain.IReminderService>(),
-            spRoot.GetRequiredService<Voice2Action.Domain.IEmailService>(),
-            DeploymentName,
-            promptFolder,
-            coordinatingAgentName);
-        var agentSet = await provider.CreateAsync();
-
-        // Determine audio file path from first command-line argument.
-        if (args.Length == 0 || string.IsNullOrWhiteSpace(args[0]))
+        var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? string.Empty;
+        var key = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? string.Empty;
+    var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? DeploymentName; // chat model deployment
+    var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper"; // audio (Whisper) deployment
+        if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(key))
         {
-            Console.WriteLine("Usage: dotnet run -- <audio-file-path>");
-            return;
-        }
-        var audioPathInput = args[0];
-        var audioPath = Path.GetFullPath(audioPathInput);
-        if (!File.Exists(audioPath))
-        {
-            Console.WriteLine($"Audio file not found: {audioPath}");
-            return;
+            Console.WriteLine("Warning: Azure OpenAI credentials not set; transcription and chat will fail.");
         }
 
-        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
-        Voice2Action.Infrastructure.AI.OrchestrationServiceCollectionExtensions.AddVoiceCommandOrchestrator(services, agentSet.Coordinator, agentSet.Workers);
-        using var sp = services.BuildServiceProvider();
-        var orchestrator = sp.GetRequiredService<Voice2Action.Domain.IVoiceCommandOrchestrator>();
-        var orchestrationResult = await orchestrator.ExecuteAsync(audioPath);
-
-        foreach (var action in orchestrationResult.Actions)
+        if (!string.IsNullOrWhiteSpace(endpoint) && !string.IsNullOrWhiteSpace(key))
         {
-            Console.WriteLine($"[{action.Agent}] {action.Action} => {action.RawResult}");
+            services.AddSingleton(new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(key)));
         }
-        Console.WriteLine("Summary: " + (orchestrationResult.Summary ?? "<none>"));
+        else
+        {
+            // Register a dummy client to avoid null checks; operations will throw if used.
+            services.AddSingleton(new AzureOpenAIClient(new Uri("https://example.invalid"), new AzureKeyCredential("placeholder")));
+        }
+
+        // Domain service implementations
+        services.AddSingleton<ITranscriptionService>(sp => new OpenAIAudioTranscriptionService(
+            sp.GetRequiredService<AzureOpenAIClient>(),
+            audioDeployment
+        ));
+        services.AddSingleton<IDateTimeService, DateTimeService>();
+        services.AddSingleton<IReminderService, ReminderService>();
+        services.AddSingleton<IEmailService, EmailService>();
+
+        services.AddAgentSetProvider(o =>
+        {
+            o.PromptDirectory = Path.Combine(AppContext.BaseDirectory, "Prompts");
+            o.DeploymentName = deployment;
+        });
+
+        // Eagerly build AgentSet so orchestrator can be created
+        services.AddSingleton(sp =>
+        {
+            var provider = sp.GetRequiredService<IAgentSetProvider>();
+            return provider.CreateAsync().GetAwaiter().GetResult();
+        });
+        services.AddSingleton<IVoiceCommandOrchestrator>(sp =>
+        {
+            var set = sp.GetRequiredService<AgentSet>();
+            return new VoiceCommandOrchestrator(set.Coordinator, set.Workers.ToList());
+        });
+    });
+    return builder.Build();
+}
+
+var host = BuildHost();
+var sp = host.Services;
+
+if (args.Length == 0 || string.IsNullOrWhiteSpace(args[0]))
+{
+    Console.WriteLine("Usage: dotnet run -- <audio-file-path>");
+    return;
+}
+var audioPath = Path.GetFullPath(args[0]);
+if (!File.Exists(audioPath))
+{
+    Console.WriteLine($"Audio file not found: {audioPath}");
+    return;
+}
+
+var orchestrator = sp.GetRequiredService<IVoiceCommandOrchestrator>();
+try
+{
+    var result = await orchestrator.ExecuteAsync(audioPath);
+    foreach (var action in result.Actions)
+    {
+        Console.WriteLine($"[{action.Agent}] {action.Action} => {action.RawResult}");
     }
+    Console.WriteLine("Summary: " + (result.Summary ?? "<none>"));
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine("Execution failed: " + ex.GetBaseException().Message);
+    Console.Error.WriteLine("Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT_NAME (chat) and AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME (audio) env vars.");
+    Environment.ExitCode = 1;
 }

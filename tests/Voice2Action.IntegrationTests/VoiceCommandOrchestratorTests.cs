@@ -41,13 +41,13 @@ public class VoiceCommandOrchestratorTests
         var result = await orchestrator.ExecuteAsync(Path.GetTempFileName());
 
         // Assert
-    // Expect 5 actions now: Plan, Worker1, Plan, Worker2, Plan(done)
-    Assert.Equal(5, result.Actions.Count);
-    Assert.Equal("Coordinator", result.Actions[0].Agent);
-    Assert.Equal("Worker1", result.Actions[1].Agent);
-    Assert.Equal("Coordinator", result.Actions[2].Agent);
-    Assert.Equal("Worker2", result.Actions[3].Agent);
-    Assert.Equal("Coordinator", result.Actions[4].Agent);
+        // Expect 5 actions now: Plan, Worker1, Plan, Worker2, Plan(done)
+        Assert.Equal(5, result.Actions.Count);
+        Assert.Equal("Coordinator", result.Actions[0].Agent);
+        Assert.Equal("Worker1", result.Actions[1].Agent);
+        Assert.Equal("Coordinator", result.Actions[2].Agent);
+        Assert.Equal("Worker2", result.Actions[3].Agent);
+        Assert.Equal("Coordinator", result.Actions[4].Agent);
         Assert.Equal("All tasks completed", result.Summary);
     }
 }

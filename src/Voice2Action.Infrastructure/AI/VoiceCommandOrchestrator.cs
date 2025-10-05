@@ -45,8 +45,8 @@ public sealed class VoiceCommandOrchestrator : IVoiceCommandOrchestrator
         if (!File.Exists(audioPath)) throw new FileNotFoundException("Audio file not found", audioPath);
 
         var result = new OrchestrationResult { AudioPath = audioPath };
-    string userRequest = $"process voice recording in file {audioPath}";
-    string coordinatorInput = userRequest;
+        string userRequest = $"process voice recording in file {audioPath}";
+        string coordinatorInput = userRequest;
         int safetyIterations = 8;
 
         while (safetyIterations-- > 0 && !ct.IsCancellationRequested)

@@ -130,8 +130,7 @@ public sealed class OpenAIAudioTranscriptionService : ITranscriptionService
                 return ctor.Invoke(new object[] { stream });
             }
             catch
-            { /* ignore */
-            }
+            { /* ignore */ }
         }
         // Try constructor(byte[])
         var ctorBytes = binaryContentType
@@ -151,8 +150,7 @@ public sealed class OpenAIAudioTranscriptionService : ITranscriptionService
                 return ctorBytes.Invoke(new object[] { ms.ToArray() });
             }
             catch
-            { /* ignore */
-            }
+            { /* ignore */ }
             finally
             {
                 if (stream.CanSeek)
@@ -176,8 +174,7 @@ public sealed class OpenAIAudioTranscriptionService : ITranscriptionService
                 return staticFactory.Invoke(null, new object[] { stream });
             }
             catch
-            { /* ignore */
-            }
+            { /* ignore */ }
         }
         return null;
     }

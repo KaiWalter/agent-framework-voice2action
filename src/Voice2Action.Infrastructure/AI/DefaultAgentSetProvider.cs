@@ -49,39 +49,11 @@ public sealed class DefaultAgentSetProvider : IAgentSetProvider
             return File.ReadAllText(path);
         }
 
-        var workers = new List<ITextAgent>();
-
-        // Utility agent (transcription + time)
-        var utilityInstructions = LoadPrompt("utility.md");
-        var utilityOptions = new ChatClientAgentOptions(utilityInstructions)
+        var workers = new List<ITextAgent>
         {
-            ChatOptions = new ChatOptions
-            {
-                Tools =
-                [
-                    AIFunctionFactory.Create(new Func<string, string>(TranscribeVoiceRecording)),
-                    AIFunctionFactory.Create(new Func<string>(GetCurrentDateTime))
-                ]
-            }
+            UtilityAgentFactory.Create(asChat, _basePromptPath, _transcriptionService, _dateTimeService),
+            OfficeAutomationAgentFactory.Create(asChat, _basePromptPath, _reminderService, _emailService)
         };
-        var utilityCore = new ChatClientAgent(asChat, utilityOptions);
-        workers.Add(new ChatClientTextAgent("Utility", new[] { "TranscribeVoiceRecording(audioPath)", "GetCurrentDateTime()" }, utilityCore));
-
-        // Office automation agent (reminders + email)
-        var officeInstructions = LoadPrompt("office-automation.md");
-        var officeOptions = new ChatClientAgentOptions(officeInstructions)
-        {
-            ChatOptions = new ChatOptions
-            {
-                Tools =
-                [
-                    AIFunctionFactory.Create(new Func<string, DateTime, DateTime?, string>(SetReminder)),
-                    AIFunctionFactory.Create(new Func<string, string, string>(SendEmail))
-                ]
-            }
-        };
-        var officeCore = new ChatClientAgent(asChat, officeOptions);
-        workers.Add(new ChatClientTextAgent("OfficeAutomation", new[] { "SetReminder(task, dueDate, reminderDate?)", "SendEmail(subject, body)" }, officeCore));
 
         // Coordinator (LLM only)
         var coordinatorTemplate = LoadPrompt("coordinator-template.md");
@@ -90,7 +62,7 @@ public sealed class DefaultAgentSetProvider : IAgentSetProvider
             "\nAlways respond ONLY in minified JSON with this schema: {\"Action\":\"DELEGATE|DONE\",\"Agent\":\"<agent name when delegating>\",\"Task\":\"<task when delegating>\",\"Summary\":\"<summary when done>\"}. When delegating transcription prefer: TranscribeVoiceRecording(/absolute/path.mp3).";
         var coordinatorOptions = new ChatClientAgentOptions(coordinatorInstructions);
         var coordinatorCore = new ChatClientAgent(asChat, coordinatorOptions);
-        var coordinatorAdapter = new ChatClientTextAgent(_coordinatorName, Array.Empty<string>(), coordinatorCore);
+        var coordinatorAdapter = new BasicTextAgent(_coordinatorName, Array.Empty<string>(), coordinatorCore);
 
         var set = new AgentSet
         {
@@ -100,24 +72,5 @@ public sealed class DefaultAgentSetProvider : IAgentSetProvider
         return Task.FromResult(set);
     }
 
-    // Tool bindings delegate to domain services (keeping infrastructure orchestration thin)
-    private string TranscribeVoiceRecording(string recording)
-    {
-        if (string.IsNullOrWhiteSpace(recording)) throw new ArgumentException("Recording path empty", nameof(recording));
-        if (!File.Exists(recording)) throw new FileNotFoundException("Audio file not found", recording);
-        return _transcriptionService.TranscribeAsync(recording).GetAwaiter().GetResult();
-    }
-    private string GetCurrentDateTime() => _dateTimeService.GetCurrentDateTime();
-    private string SetReminder(string task, DateTime dueDate, DateTime? reminderDate) => _reminderService.SetReminder(task, dueDate, reminderDate);
-    private string SendEmail(string subject, string body) => _emailService.SendEmail(subject, body);
-
-    private sealed class ChatClientTextAgent : ITextAgent
-    {
-        private readonly ChatClientAgent _inner;
-        public string Name { get; }
-        public string[] Capabilities { get; }
-        public ChatClientTextAgent(string name, string[] capabilities, ChatClientAgent inner)
-        { Name = name; _inner = inner; Capabilities = capabilities; }
-        public async Task<string> RunAsync(string input, CancellationToken ct = default) => (await _inner.RunAsync(input, cancellationToken: ct)).ToString();
-    }
+    // Tool bindings no longer duplicated here – logic moved into factories.
 }
