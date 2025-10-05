@@ -14,11 +14,15 @@ Architecture follows a Clean-ish layering:
 Goal: Swap AI/provider logic or add delivery channels without touching Domain/Application code.
 
 ## 2. Development Environment & Build
-ALWAYS enter the Nix dev shell before any `dotnet build` or `dotnet run` so the .NET 9 SDK is available. If you skip this you'll hit NETSDK1045 errors.
+ALWAYS enter an appropriate Nix dev shell before any `dotnet build` or `dotnet run` so the .NET 9 SDK is available. If you skip this you'll hit NETSDK1045 errors.
 
-Start shell (one time per terminal session):
+Dev shells:
 ```
+# Interactive (loads secrets via 1Password CLI shellHook)
 nix develop
+
+# Minimal build shell (no secrets) – use for CI or pure compilation
+nix develop .#build -c dotnet build
 ```
 Quick verification: `dotnet --version` should start with `9.`. If it shows `8.` you are not in the shell.
 
@@ -38,9 +42,12 @@ Focused instructions so an AI agent can be productive immediately.
 Goal: Swap providers or delivery channels without touching Domain/Application.
 
 ### 2. Build & Run
-Always enter dev shell (provides .NET 9):
+Choose a dev shell (interactive vs build) to ensure .NET 9 is available:
 ```
+# interactive dev (with secrets)
 nix develop
+# or pure build (no secrets fetched)
+nix develop .#build -c dotnet build
 ```
 Env vars (API key only – CLI auth removed):
 ```
@@ -48,9 +55,13 @@ export AZURE_OPENAI_ENDPOINT="https://<resource>.openai.azure.com"
 export AZURE_OPENAI_API_KEY="<key>"
 export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # or your deployment
 ```
-Run sample:
+Run sample (needs secrets → use interactive shell):
 ```
 dotnet run --project src/Voice2Action.Console/Voice2Action.Console.csproj
+```
+Pure build (no run, no secrets required):
+```
+nix develop .#build -c dotnet build
 ```
 
 ### 3. Agent / LLM Usage Pattern

@@ -20,32 +20,16 @@ public static class Program
         ?? throw new InvalidOperationException("AZURE_OPENAI_API_KEY is not set.");
 
     private const string coordinatingAgentName = "Planner";
-    private const string coordinatingAgentInstructions =
-        @"You are a team planner and coordinator. You do not need to fulfill the user's request directly. You solely rely on your team members.
-        You collect and state the user's request with all available information and state a task that one of the team members can fulfill.
-        General rules:
-        - when there is a voice recording file mentioned, ask an agent to transcribe it first
-        - when the transcription is available, ask the agents whether they can fulfill the request
-        ";
-
-    // @"Based on a voice recording you determine the user's intent and take action.
-    // Your task is to coordinate between multiple specialized agents to fulfill the user's request.
-    // You cannot fulfill the user's request directly. Respond by asking one of the specialized agents to do so and this response will be passed on to the available agents.
-    // ";
-
     private const string utilityAgentName = "Utility";
-    private const string utilityAgentInstructions =
-        @"You are a specifically designed agent to handle general utility tasks based on the tools available to you.
-        When you can help with a request, you do so directly or respond that you cannot help.
-        Always respond in a concise manner.
-        ";
-
     private const string officeAutomationAgentName = "OfficeAutomation";
-    private const string officeAutomationAgentInstructions =
-        @"You are a specifically designed agent to handle office automation tasks (e.g. sending emails, creating reminders) based on the tools available to you.
-        When you can help with a request, you do so directly or respond that you cannot help.
-        Always respond in a concise manner.
-        ";
+
+    private static string LoadPrompt(string fileName)
+    {
+        var baseDir = AppContext.BaseDirectory; // points to build output folder
+        var path = Path.Combine(baseDir, "Prompts", fileName);
+        if (!File.Exists(path)) throw new FileNotFoundException($"Prompt file not found: {path}");
+        return File.ReadAllText(path);
+    }
 
     private static readonly Lazy<IHost> HostContainer = new(() =>
     {
@@ -86,11 +70,26 @@ public static class Program
             .GetResult();
     }
 
-    [Description("Set a reminder for the given task at the specified date and time.")]
+    [Description("Return the current date/time to support normalization of relative or partial dates. Format: LOCAL=yyyy-MM-ddTHH:mm:ssK;UTC=yyyy-MM-ddTHH:mm:ssZ")] 
+    public static string GetCurrentDateTime()
+    {
+        var nowLocal = DateTime.Now; // local machine time
+        var nowUtc = DateTime.UtcNow;
+        return $"LOCAL={nowLocal:yyyy-MM-ddTHH:mm:ssK};UTC={nowUtc:yyyy-MM-ddTHH:mm:ssZ}";
+    }
+
+    [Description("Set a reminder for the given task at the specified date and optional earlier reminder time.")]
     public static string SetReminder(
         [Description("Task to be reminded of.")] string task,
-        [Description("Due date and time for the reminder.")] DateTime dueDate
-    ) => $"Reminder set for task '{task}' at {dueDate}.";
+        [Description("Due date for the task.")] DateTime dueDate,
+        [Description("Optional reminder date/time (before due date).")] DateTime? reminderDate
+    )
+    {
+        var baseMsg = $"Reminder set for task '{task}' due at {dueDate}.";
+        return reminderDate.HasValue
+            ? baseMsg + $" Reminder will trigger at {reminderDate.Value}."
+            : baseMsg;
+    }
 
     [Description("Send an email with the given subject and body to the user.")]
     public static string SendEmail(
@@ -98,54 +97,104 @@ public static class Program
         [Description("Email body.")] string body
     ) => $"Email sent with subject '{subject}' and body '{body}'";
 
-    public static async Task Main()
+    public static async Task Main(string[] args)
     {
         var chatClient = new AzureOpenAIClient(
             new Uri(Endpoint),
             new AzureKeyCredential(ApiKey)
         ).GetChatClient(DeploymentName);
-        AIAgent coordinator = chatClient.CreateAIAgent(
-            coordinatingAgentName,
-            coordinatingAgentInstructions
-        );
+        // IMPORTANT: Create agents using (instructions, name) order. Previous version reversed them causing misbehavior.
+        var coordinatorInstructions = LoadPrompt("coordinator.md");
+        var utilityInstructions = LoadPrompt("utility.md");
+        var officeAutomationInstructions = LoadPrompt("office-automation.md");
 
+        AIAgent coordinator = chatClient.CreateAIAgent(coordinatorInstructions, coordinatingAgentName);
         AIAgent utility = chatClient.CreateAIAgent(
+            utilityInstructions,
             utilityAgentName,
-            utilityAgentInstructions,
-            tools: [AIFunctionFactory.Create(new Func<string, string>(TranscribeVoiceRecording))]
+            tools: [
+                AIFunctionFactory.Create(new Func<string, string>(TranscribeVoiceRecording)),
+                AIFunctionFactory.Create(new Func<string>(GetCurrentDateTime))
+            ]
         );
-
         AIAgent officeAutomation = chatClient.CreateAIAgent(
+            officeAutomationInstructions,
             officeAutomationAgentName,
-            officeAutomationAgentInstructions,
             tools:
             [
-                AIFunctionFactory.Create(new Func<string, DateTime, string>(SetReminder)),
+                AIFunctionFactory.Create(new Func<string, DateTime, DateTime?, string>(SetReminder)),
                 AIFunctionFactory.Create(new Func<string, string, string>(SendEmail)),
             ]
         );
 
-        // AgentThread thread = agent.GetNewThread();
+        // Determine audio file path from first command-line argument.
+        if (args.Length == 0 || string.IsNullOrWhiteSpace(args[0]))
+        {
+            Console.WriteLine("Usage: dotnet run -- <audio-file-path>");
+            return;
+        }
+        var audioPath = args[0];
+        if (!File.Exists(audioPath))
+        {
+            Console.WriteLine($"Audio file not found: {audioPath}");
+            return;
+        }
 
-        var result = await coordinator.RunAsync(
-            "process voice recording in file ../../audio-samples/sample-recording-1-task-with-due-date-and-reminder.mp3"
-        );
-        Console.WriteLine(result);
+        // Construct initial user request referencing provided file.
+        string userRequest = $"process voice recording in file {audioPath}";
+        string? transcription = null;
+        int safetyIterations = 8; // prevent infinite loops
+        string coordinatorInput = userRequest;
+        while (safetyIterations-- > 0)
+        {
+            var coordResponse = (await coordinator.RunAsync(coordinatorInput)).ToString();
+            Console.WriteLine($"[Coordinator] {coordResponse}");
 
-        // var result = await agent.RunAsync(
-        //     "process voice recording in file ./audio-samples/sample-recording-1-task-with-due-date-and-reminder.mp3",
-        //     thread
-        // );
-        // Console.WriteLine(result);
-        // result = await agent.RunAsync(
-        //     "process voice recording in file ./audio-samples/sample-recording-2-random-thoughts.mp3",
-        //     thread
-        // );
-        // Console.WriteLine(result);
-        // result = await agent.RunAsync(
-        //     "process voice recording in file ./audio-samples/sample-recording-3-send-email.mp3",
-        //     thread
-        // );
-        // Console.WriteLine(result);
+            if (coordResponse.StartsWith("DONE|", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Workflow complete.");
+                break;
+            }
+
+            if (!coordResponse.StartsWith("DELEGATE:", StringComparison.OrdinalIgnoreCase))
+            {
+                coordinatorInput = "Your response did not follow required format. Please output DELEGATE:<Agent>|<Task> or DONE|<summary>.";
+                continue;
+            }
+
+            // Parse: DELEGATE:AgentName|Task
+            var payload = coordResponse.Substring("DELEGATE:".Length);
+            var split = payload.Split('|', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (split.Length != 2)
+            {
+                coordinatorInput = "Format parsing error. Reissue correctly.";
+                continue;
+            }
+            var targetAgent = split[0];
+            var task = split[1];
+
+            string agentResult;
+            switch (targetAgent)
+            {
+                case "Utility":
+                    agentResult = (await utility.RunAsync(task)).ToString();
+                    if (transcription == null && !agentResult.StartsWith("CANNOT"))
+                        transcription = agentResult; // assume first utility output is transcription
+                    break;
+                case "OfficeAutomation":
+                    agentResult = (await officeAutomation.RunAsync(task)).ToString();
+                    break;
+                default:
+                    agentResult = $"UNKNOWN_AGENT:{targetAgent}";
+                    break;
+            }
+            Console.WriteLine($"[{targetAgent}] {agentResult}");
+
+            coordinatorInput = $"Result from {targetAgent}: {agentResult}. If more steps needed delegate; else DONE|<summary>.";
+        }
+        if (safetyIterations <= 0)
+        {
+            Console.WriteLine("Stopped due to safety iteration limit.");
+        }
     }
 }

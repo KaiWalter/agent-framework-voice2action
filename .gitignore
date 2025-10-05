@@ -27,6 +27,7 @@ obj/
 *.bak
 *.swp
 *.orig
+.nix-shell-history
 
 # Logs
 *.log

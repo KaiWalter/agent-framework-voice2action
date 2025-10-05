@@ -33,6 +33,21 @@ Benefits:
 - Unit-test use case with in-memory fakes
 - Future channels (API, queue trigger, voice ingestion) only replace the outer layer
 
+### Dev Environment & Build
+
+This repo uses a Nix flake to pin the .NET 9 SDK. Two dev shells exist:
+
+- Interactive development (loads secrets via 1Password CLI):
+	```bash
+	nix develop
+	```
+- Minimal build shell (no secrets, suitable for CI / pure builds):
+	```bash
+	nix develop .#build -c dotnet build
+	```
+
+If you see NETSDK1045 or a .NET version other than 9.x, you are not inside one of the dev shells.
+
 ### Running
 
 Set environment variables:
@@ -42,10 +57,16 @@ export AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com"
 export AZURE_OPENAI_DEPLOYMENT_NAME="gpt-4o" # or your deployment
 ```
 
-Then build and run the console project:
+Then build and run the console project (interactive shell recommended so secrets are present):
 
 ```bash
 dotnet run --project src/Voice2Action.Console/Voice2Action.Console.csproj
+```
+
+For a pure compile (e.g. CI) without needing runtime secrets:
+
+```bash
+nix develop .#build -c dotnet build
 ```
 
 ### Next Steps (Ideas)
