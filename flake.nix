@@ -66,8 +66,8 @@
             v2a_project_tag() {
               # agnoster sets PROMPT; append subtle tag if not already present
               case "$PROMPT" in
-                *voice2action*) ;;
-                *) PROMPT="$PROMPT%F{cyan}[voice2action]%f " ;;
+                (🚧\ *) ;;
+                (*) PROMPT="🚧 $PROMPT" ;;
               esac
             }
           EOF
