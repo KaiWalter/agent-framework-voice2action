@@ -23,20 +23,20 @@ static IHost BuildHost()
     {
         var endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? string.Empty;
         var key = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? string.Empty;
-    var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? DeploymentName; // chat model deployment
-    var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper"; // audio (Whisper) deployment
+        var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? DeploymentName; // chat model deployment
+        var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper"; // audio (Whisper) deployment
         if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(key))
         {
             Console.WriteLine("Warning: Azure OpenAI credentials not set; transcription and chat will fail.");
         }
 
+        // Chat (text) interactions still use AzureOpenAIClient; audio transcription now uses raw HttpClient REST call.
         if (!string.IsNullOrWhiteSpace(endpoint) && !string.IsNullOrWhiteSpace(key))
         {
             services.AddSingleton(new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(key)));
         }
         else
         {
-            // Register a dummy client to avoid null checks; operations will throw if used.
             services.AddSingleton(new AzureOpenAIClient(new Uri("https://example.invalid"), new AzureKeyCredential("placeholder")));
         }
 

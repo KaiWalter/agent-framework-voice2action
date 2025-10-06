@@ -1,9 +1,9 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Voice2Action.Domain;
 using Voice2Action.Infrastructure.AI;
@@ -21,8 +21,6 @@ public sealed class AudioTranscriptionIntegrationTests
                 var apiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? "FAKE_KEY"; // placeholder
                 var audioDeployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME") ?? "whisper"; // audio model
 
-                services.AddSingleton(sp => new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey)));
-
                 var useFake = (Environment.GetEnvironmentVariable("USE_FAKE_TRANSCRIPTION_FOR_TESTS") ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
                 bool placeholderCreds = endpoint.Contains("example.openai.azure.com", StringComparison.OrdinalIgnoreCase) || apiKey == "FAKE_KEY";
                 if (useFake || placeholderCreds)
@@ -31,6 +29,7 @@ public sealed class AudioTranscriptionIntegrationTests
                 }
                 else
                 {
+                    services.AddSingleton(new AzureOpenAIClient(new Uri(endpoint), new AzureKeyCredential(apiKey)));
                     services.AddSingleton<ITranscriptionService>(sp => new OpenAIAudioTranscriptionService(sp.GetRequiredService<AzureOpenAIClient>(), audioDeployment));
                 }
             })

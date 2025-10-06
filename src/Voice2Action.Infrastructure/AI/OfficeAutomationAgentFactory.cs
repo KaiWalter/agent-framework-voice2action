@@ -15,7 +15,7 @@ internal static class OfficeAutomationAgentFactory
         string SetReminder(
             [Description("Task to be reminded of.")] string task,
             [Description("Due date for the task.")] DateTime dueDate,
-            [Description("Optional reminder date/time (before due date)." )] DateTime? reminderDate)
+            [Description("Optional reminder date/time (before due date).")] DateTime? reminderDate)
         {
             return reminderService.SetReminder(task, dueDate, reminderDate);
         }
