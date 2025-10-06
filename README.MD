@@ -117,6 +117,34 @@ Planned enhancements:
 * Structured evaluation of planner termination (guard against loops).
 * Telemetry (timings, token usage) via OpenTelemetry exporters.
 * Add streaming / incremental UI variant.
+* Expose selected agents (Utility) via MCP for external tool consumers.
+
+## MCP Server (Utility Agent Tools)
+
+The Utility agent's two functions (audio transcription + current date/time) are also exposed as an MCP server in the Application layer via `UtilityMcpServer`. This lets any MCP‑capable client call your transcription and time utilities without spinning up the full multi‑agent planner.
+
+Example host snippet inside a custom console app:
+
+```csharp
+using Voice2Action.Application;
+using Voice2Action.Infrastructure.AI; // for concrete service implementations (or supply your own)
+
+// Construct domain service implementations (normally from DI / Infrastructure)
+var transcription = new OpenAIAudioTranscriptionService(
+  Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")!,
+  Environment.GetEnvironmentVariable("AZURE_OPENAI_AUDIO_DEPLOYMENT_NAME")!,
+  Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")!);
+var dateTime = new DateTimeService();
+
+await UtilityMcpServer.RunAsync(transcription, dateTime, CancellationToken.None);
+```
+
+The server uses stdio transport per MCP conventions. Tools exposed:
+
+1. `TranscribeVoiceRecording(recording)` – returns raw text.
+2. `GetCurrentDateTime()` – returns `LOCAL=` and `UTC=` timestamps.
+
+You can integrate this with editors / agents that speak MCP by pointing them at the compiled binary (stdio bridge).
 
 ---
 For historical context, an earlier spam/email classification slice was removed in favor of the present multi‑agent voice orchestration; any lingering references in code comments will be gradually cleaned.
