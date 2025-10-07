@@ -1,15 +1,9 @@
-// Exposes the Utility agent's tool functions as an MCP server.
 using System.ComponentModel;
-using Microsoft.Agents.AI; // AIFunctionFactory
-using Microsoft.Extensions.AI; // Tool abstractions
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.Extensions.Hosting;
-using Microsoft.AspNetCore.Hosting; // For Kestrel configuration
-using ModelContextProtocol.Server; // McpServerTool + extension methods
+using Microsoft.Extensions.AI;
+using ModelContextProtocol.Server;
 using Voice2Action.Domain;
 
-namespace Voice2Action.Application;
+namespace Voice2Action.McpUtility;
 
 public static class UtilityMcpServer
 {
@@ -39,11 +33,10 @@ public static class UtilityMcpServer
         };
 
         var webBuilder = WebApplication.CreateBuilder();
-        // Optional: allow overriding port via MCP_HTTP_PORT env var.
-        var portEnv = Environment.GetEnvironmentVariable("MCP_HTTP_PORT");
+        var portEnv = Environment.GetEnvironmentVariable("MCP_HTTP_PORT_UTILITY");
         if (int.TryParse(portEnv, out var port) && port > 0)
         {
-            webBuilder.WebHost.ConfigureKestrel(o => o.ListenAnyIP(port));
+            webBuilder.WebHost.UseKestrel(o => o.ListenAnyIP(port));
         }
 
         webBuilder.Services
@@ -52,9 +45,7 @@ public static class UtilityMcpServer
             .WithTools(tools);
 
         var app = webBuilder.Build();
-        // Simple health endpoint
-    app.MapGet("/healthz", () => new { status = "ok", tools = new[] { "TranscribeVoiceRecording", "GetCurrentDateTime" } });
-
+        app.MapGet("/healthz", () => new { status = "ok", tools = new[] { "TranscribeVoiceRecording", "GetCurrentDateTime" } });
         app.MapMcp();
         Console.WriteLine("Utility MCP HTTP server started. Tools: TranscribeVoiceRecording, GetCurrentDateTime");
         await app.RunAsync(cancellationToken).ConfigureAwait(false);

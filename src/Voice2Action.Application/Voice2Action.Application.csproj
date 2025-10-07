@@ -8,12 +8,8 @@
     <ProjectReference Include="../Voice2Action.Domain/Voice2Action.Domain.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Hosting / MCP server packages removed; Application assembly now only provides orchestration abstractions. -->
     <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.251002.1" />
-    <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.1" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0-preview.5.24306.7" />
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.4.0-preview.1" />
   </ItemGroup>
-  <ItemGroup>
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
-  </ItemGroup>
+  <!-- Removed FrameworkReference to Microsoft.AspNetCore.App (server logic moved to McpOffice/McpUtility). -->
 </Project>

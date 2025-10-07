@@ -27,7 +27,6 @@ obj/
 *.bak
 *.swp
 *.orig
-.nix-zsh
 
 # Logs
 *.log
@@ -70,8 +69,11 @@ appsettings.*.local.json
 secrets.json
 
 # Tooling caches
-.sonarqube/
+.aspire/
+.devcert/
+.nix-zsh/
 .scannerwork/
+.sonarqube/
 
 # Python helper scripts cache (if any)
 __pycache__/

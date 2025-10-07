@@ -1,9 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Configuration;
 using Voice2Action.Domain;
 using Voice2Action.Infrastructure.AI;
-using Voice2Action.Application;
+using Voice2Action.McpOffice;
 
 // Console app that exposes the OfficeAutomation agent (reminder + email) as an MCP HTTP server.
 // Port override: MCP_HTTP_PORT_OFFICE

@@ -1,14 +1,11 @@
 using Azure;
 using Azure.AI.OpenAI;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Configuration;
 using Voice2Action.Domain;
 using Voice2Action.Infrastructure.AI;
-using Voice2Action.Application;
+using Voice2Action.McpUtility;
 
 // Console app that exposes the Utility agent (transcription + current time) as an MCP HTTP server.
-// Port override: MCP_HTTP_PORT
+// Port override: MCP_HTTP_PORT_UTILITY
 
 const string DefaultAudioDeployment = "whisper";
 
@@ -44,7 +41,6 @@ var builder = Host.CreateDefaultBuilder(args)
 
 var host = builder.Build();
 var sp = host.Services;
-
 var transcription = sp.GetRequiredService<ITranscriptionService>();
 var dateTime = sp.GetRequiredService<IDateTimeService>();
 Console.WriteLine("Starting Utility MCP HTTP server (transcription + current time). Press Ctrl+C to exit.");
