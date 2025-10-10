@@ -61,7 +61,7 @@ ITextAgent CreateWorker(string name, string prompt, IEnumerable<AITool> tools)
 {
     var chatAgent = new ChatClientAgent(chatClient, new ChatClientAgentOptions(prompt)
     {
-        ChatOptions = new ChatOptions { Tools = tools.ToList() }
+        ChatOptions = new ChatOptions { Tools = tools.ToList(), Temperature = 0 }
     });
     return new ChatClientAgentAdapter(name, tools.Select(t => t.Name).ToArray(), chatAgent);
 }
@@ -71,12 +71,16 @@ var workers = new List<ITextAgent>
     CreateWorker("OfficeAutomation", officePrompt, officeTools)
 };
 
-string InferActionFromTask(string task) =>
-    task.Contains("Transcribe", StringComparison.OrdinalIgnoreCase) ? "Transcribe" :
-    task.Contains("SetReminder", StringComparison.OrdinalIgnoreCase) ? "SetReminder" :
-    task.Contains("SendEmail", StringComparison.OrdinalIgnoreCase) ? "SendEmail" :
-    task.Contains("GetCurrentDateTime", StringComparison.OrdinalIgnoreCase) ? "GetCurrentDateTime" :
-    "Unknown";
+string InferActionFromTask(string task)
+{
+    // Generic heuristic: take leading alphabetic characters up to first '(' or space as action verb/capability name.
+    var trimmed = task.Trim();
+    int end = trimmed.IndexOf('(');
+    if (end < 0) end = trimmed.IndexOf(' ');
+    if (end < 0) end = Math.Min(trimmed.Length, 40);
+    var head = new string(trimmed.Take(end).Where(char.IsLetter).ToArray());
+    return string.IsNullOrWhiteSpace(head) ? "Unknown" : head;
+}
 
 async Task RunOrchestrationAsync(string audioPath, CancellationToken ct = default)
 {
@@ -88,10 +92,11 @@ async Task RunOrchestrationAsync(string audioPath, CancellationToken ct = defaul
     var absPath = Path.GetFullPath(audioPath);
     var catalog = string.Join("\n", workers.Select(w => $"- {w.Name}: {string.Join(", ", w.Capabilities)}"));
     var coordinatorTemplate = LoadPrompt("coordinator-template.md");
-    var coordinatorInstructions = coordinatorTemplate.Replace("{{AGENT_CATALOG}}", catalog) +
-        "\nAlways respond ONLY in minified JSON: {\"Action\":\"DELEGATE|DONE\",\"Agent\":\"<agent name when delegating>\",\"Task\":\"<task when delegating>\",\"Summary\":\"<summary when done>\"}." +
-        $" When delegating transcription prefer: TranscribeVoiceRecording({absPath}). Do not output DONE until all required terminal actions (e.g. reminders, emails) have been delegated per the rules.";
-    var planner = new ChatClientAgent(chatClient, new ChatClientAgentOptions(coordinatorInstructions));
+    var coordinatorInstructions = coordinatorTemplate.Replace("{{AGENT_CATALOG}}", catalog);
+    var planner = new ChatClientAgent(chatClient, new ChatClientAgentOptions(coordinatorInstructions)
+    {
+        ChatOptions = new ChatOptions { Temperature = 0 }
+    });
     var plannerAdapter = new ChatClientAgentAdapter("Planner", Array.Empty<string>(), planner);
 
     var actions = new List<AgentActionRecord>();
@@ -112,7 +117,7 @@ async Task RunOrchestrationAsync(string audioPath, CancellationToken ct = defaul
         }
         if (parsed?.Action?.Equals("DELEGATE", StringComparison.OrdinalIgnoreCase) != true || string.IsNullOrWhiteSpace(parsed.Agent) || string.IsNullOrWhiteSpace(parsed.Task))
         {
-            plannerInput = "Malformed JSON. Return required shape.";
+            plannerInput = "{\"Error\":\"Malformed JSON - expected DELEGATE or DONE per contract\"}";
             continue;
         }
         var worker = workers.FirstOrDefault(w => w.Name.Equals(parsed.Agent, StringComparison.OrdinalIgnoreCase));
@@ -121,19 +126,70 @@ async Task RunOrchestrationAsync(string audioPath, CancellationToken ct = defaul
             plannerInput = "Unknown agent. Replan.";
             continue;
         }
-        var workerOutput = await worker.RunAsync(parsed.Task, ct);
-        if (transcript == null && parsed.Task.Contains("TranscribeVoiceRecording", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(workerOutput))
+        // Auto-populate fallback notification arguments if planner omitted them.
+        if (parsed.Task.StartsWith("SendFallbackNotification", StringComparison.OrdinalIgnoreCase))
         {
-            transcript = workerOutput.Trim();
+            var trimmed = parsed.Task.Trim();
+            var hasParen = trimmed.Contains('(');
+            var hasArgs = hasParen && !trimmed.EndsWith("()", StringComparison.Ordinal);
+            if (!hasArgs)
+            {
+                var subj = "Note: " + (transcript != null ? string.Join(' ', transcript.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(7)) : "Voice note");
+                if (subj.Length > 60) subj = subj[..60];
+                var bodySource = transcript ?? $"No transcript captured yet for audio {absPath}";
+                // Escape quotes minimally for embedding in tool call style string
+                subj = subj.Replace("\"", "'");
+                bodySource = bodySource.Replace("\"", "'");
+                parsed.Task = $"SendFallbackNotification(subject: \"{subj}\", body: \"{bodySource}\")";
+                Console.WriteLine($"[AutoArgs] Injected fallback args -> {parsed.Task}");
+            }
+        }
+        var workerOutput = await worker.RunAsync(parsed.Task, ct);
+        if (!string.IsNullOrWhiteSpace(workerOutput))
+        {
+            try
+            {
+                using var doc0 = JsonDocument.Parse(workerOutput);
+                JsonElement root = doc0.RootElement;
+                // If the root is a JSON string that itself contains JSON, unwrap once.
+                if (root.ValueKind == JsonValueKind.String)
+                {
+                    var inner = root.GetString();
+                    if (!string.IsNullOrWhiteSpace(inner) && inner.TrimStart().StartsWith("{"))
+                    {
+                        using var doc1 = JsonDocument.Parse(inner);
+                        root = doc1.RootElement.Clone();
+                    }
+                }
+                if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("ok", out var okEl) && okEl.ValueKind == JsonValueKind.True && root.TryGetProperty("type", out var typeEl2))
+                {
+                    var type = typeEl2.GetString();
+                    if (type == "Transcription" && transcript == null && root.TryGetProperty("data", out var dataEl) && dataEl.TryGetProperty("text", out var textEl))
+                    {
+                        transcript = textEl.GetString();
+                    }
+                }
+            }
+            catch { /* ignore non-JSON outputs */ }
+            if (transcript == null && parsed.Task.Contains("Transcribe", StringComparison.OrdinalIgnoreCase))
+            {
+                transcript = workerOutput.Trim().Trim('"');
+            }
         }
         actions.Add(new AgentActionRecord { Agent = worker.Name, Action = InferActionFromTask(parsed.Task), RawResult = workerOutput });
         plannerInput = JsonSerializer.Serialize(new
         {
             Transcript = transcript,
-            Actions = actions.Select(a => new { a.Agent, a.Action, a.RawResult }),
-            Guidance = "Decide next step. If a reminder or email can be created based on the transcript, delegate to OfficeAutomation with explicit SetReminder or SendEmail task (include task, due date, optional reminder date). Otherwise gather missing info or DONE with summary.",
-            RequiredResponse = new { Action = "DELEGATE|DONE", Agent = "<when delegating>", Task = "<instruction when delegating>", Summary = "<when done>" }
+            LastWorkerOutputJson = TryParse(workerOutput),
+            TerminalActionsExecuted = actions.Where(a => a.Agent != plannerAdapter.Name && a.Action != "Plan" && a.Action != "Unknown" && !a.Action.StartsWith("Get", StringComparison.OrdinalIgnoreCase) && !a.Action.StartsWith("Read", StringComparison.OrdinalIgnoreCase) && !a.Action.StartsWith("Fetch", StringComparison.OrdinalIgnoreCase) && !a.Action.StartsWith("Lookup", StringComparison.OrdinalIgnoreCase) && !a.Action.StartsWith("Look", StringComparison.OrdinalIgnoreCase) && !a.Action.StartsWith("Transcribe", StringComparison.OrdinalIgnoreCase)).Select(a => a.Action).Distinct().ToArray()
         });
+
+        // Simple repetition guard: if last 3 planner actions delegate to the same task, nudge planner.
+        var recentPlans = actions.TakeLast(6).Where(a => a.Agent == plannerAdapter.Name && a.Action == "Plan").Select(a => a.RawResult).ToList();
+        if (recentPlans.Count >= 3 && recentPlans.TakeLast(3).All(r => r?.Contains(parsed.Task, StringComparison.OrdinalIgnoreCase) == true))
+        {
+            plannerInput = plannerInput + "\nNOTE: You have repeated the same retrieval task multiple times. Either use a different tool to progress toward a terminal action (schedule, send, create) or conclude with DONE and a summary.";
+        }
     }
 
     Console.WriteLine("--- Orchestration Complete ---");
@@ -146,13 +202,34 @@ async Task RunOrchestrationAsync(string audioPath, CancellationToken ct = defaul
     }
 }
 
-Console.WriteLine("Enter path to audio file (or blank to exit):");
+// If audio file paths provided as command line args, process them (supports relative paths) then exit.
+var argsList = Environment.GetCommandLineArgs().Skip(1).ToList();
+if (argsList.Count > 0)
+{
+    foreach (var p in argsList)
+    {
+        var resolved = Path.GetFullPath(p);
+        Console.WriteLine($"\n[ARG] Processing audio path: {p} -> {resolved}");
+        await RunOrchestrationAsync(resolved);
+    }
+    return;
+}
+
+// Fallback interactive loop.
+Console.WriteLine("Enter path to audio file (blank to exit):");
 string? line;
 while (!string.IsNullOrEmpty(line = Console.ReadLine()))
 {
-    await RunOrchestrationAsync(line!);
+    var resolved = Path.GetFullPath(line!);
+    await RunOrchestrationAsync(resolved);
     Console.WriteLine();
-    Console.WriteLine("Enter path to audio file (or blank to exit):");
+    Console.WriteLine("Enter path to audio file (blank to exit):");
+}
+
+static object? TryParse(string? json)
+{
+    if (string.IsNullOrWhiteSpace(json)) return null;
+    try { return JsonSerializer.Deserialize<object>(json); } catch { return null; }
 }
 
 // Local type for planner parsing (domain AgentActionRecord already available)

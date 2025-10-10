@@ -16,7 +16,8 @@ builder.Services.AddSingleton<IEmailService, EmailService>();
 var tools = new[]
 {
     McpServerTool.Create(AIFunctionFactory.Create(new Func<string, DateTime, DateTime?, string>(OfficeToolHost.SetReminder))),
-    McpServerTool.Create(AIFunctionFactory.Create(new Func<string, string, string>(OfficeToolHost.SendEmail)))
+    McpServerTool.Create(AIFunctionFactory.Create(new Func<string, string, string>(OfficeToolHost.SendEmail))),
+    McpServerTool.Create(AIFunctionFactory.Create(new Func<string, string, string>(OfficeToolHost.SendFallbackNotification)))
 };
 
 // NOTE: Port selection now handled by the root distributed AppHost. Remove any direct Kestrel port overrides here.
@@ -31,7 +32,7 @@ var sp = app.Services;
 OfficeToolHost.ReminderService = sp.GetRequiredService<IReminderService>();
 OfficeToolHost.EmailService = sp.GetRequiredService<IEmailService>();
 
-app.MapGet("/healthz", () => new { status = "ok", tools = new[] { "SetReminder", "SendEmail" } });
+app.MapGet("/healthz", () => new { status = "ok", tools = new[] { "SetReminder", "SendEmail", "SendFallbackNotification" } });
 app.MapMcp();
-Console.WriteLine("OfficeAutomation MCP HTTP server started. Tools: SetReminder, SendEmail");
+Console.WriteLine("OfficeAutomation MCP HTTP server started. Tools: SetReminder, SendEmail, SendFallbackNotification");
 app.Run();

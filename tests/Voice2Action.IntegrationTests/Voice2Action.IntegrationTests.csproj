@@ -8,6 +8,8 @@
     <ProjectReference Include="../../src/Voice2Action.Domain/Voice2Action.Domain.csproj" />
     <ProjectReference Include="../../src/Voice2Action.Application/Voice2Action.Application.csproj" />
     <ProjectReference Include="../../src/Voice2Action.Infrastructure/Voice2Action.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/Voice2Action.McpUtility/Voice2Action.McpUtility.csproj" />
+    <ProjectReference Include="../../src/Voice2Action.McpOffice/Voice2Action.McpOffice.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
